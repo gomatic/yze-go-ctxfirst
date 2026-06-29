@@ -26,36 +26,32 @@ var Analyzer = &analysis.Analyzer{
 var Registration = goyze.Registration{
 	Name:       "ctxfirst",
 	Categories: []goyze.Category{"patterns"},
-	URL:        "https://docs.gomatic.dev/yze/go/ctxfirst",
+	URL:        "https://docs.gomatic.dev/yze/ctxfirst",
 	Analyzer:   Analyzer,
 }
 
 // run reports each context.Context parameter that is not the first parameter.
+// It inspects every function signature — declarations, methods, interface
+// methods, function literals, and function-typed definitions — because the
+// context-first idiom is a contract on any signature taking a context.Context.
 func run(pass *analysis.Pass) (any, error) {
 	insp := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
-	insp.Preorder([]ast.Node{(*ast.FuncDecl)(nil)}, func(n ast.Node) {
-		checkParams(pass, n.(*ast.FuncDecl).Type.Params)
+	insp.Preorder([]ast.Node{(*ast.FuncType)(nil)}, func(n ast.Node) {
+		checkParams(pass, n.(*ast.FuncType).Params)
 	})
 	return nil, nil
 }
 
-// checkParams reports a context.Context field that does not start at position 0.
+// checkParams reports a context.Context parameter that is not the first field.
+// Only the first field's position matters: a later field is never first
+// regardless of how many names earlier fields declare, so a plain field index
+// suffices.
 func checkParams(pass *analysis.Pass, params *ast.FieldList) {
-	index := 0
-	for _, field := range params.List {
-		if index > 0 && isContext(pass, field.Type) {
+	for i, field := range params.List {
+		if i > 0 && isContext(pass, field.Type) {
 			pass.Reportf(field.Type.Pos(), message)
 		}
-		index += positionsOf(field)
 	}
-}
-
-// positionsOf returns the number of parameter positions a field occupies.
-func positionsOf(field *ast.Field) int {
-	if len(field.Names) == 0 {
-		return 1
-	}
-	return len(field.Names)
 }
 
 // isContext reports whether expr names context.Context.
