@@ -3,8 +3,9 @@
 package main
 
 import (
-	ctxfirst "github.com/gomatic/yze-go-ctxfirst"
 	"golang.org/x/tools/go/analysis/singlechecker"
+
+	ctxfirst "github.com/gomatic/yze-ctxfirst"
 )
 
 // run is the analysis entry point, indirected so the binary's wiring is testable

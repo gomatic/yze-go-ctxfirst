@@ -3,10 +3,11 @@ package main
 import (
 	"testing"
 
-	ctxfirst "github.com/gomatic/yze-go-ctxfirst"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/tools/go/analysis"
+
+	ctxfirst "github.com/gomatic/yze-ctxfirst"
 )
 
 func TestMainRunsTheAnalyzer(t *testing.T) {

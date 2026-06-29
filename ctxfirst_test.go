@@ -3,9 +3,10 @@ package ctxfirst_test
 import (
 	"testing"
 
-	ctxfirst "github.com/gomatic/yze-go-ctxfirst"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/tools/go/analysis/analysistest"
+
+	ctxfirst "github.com/gomatic/yze-ctxfirst"
 )
 
 func TestContextMustBeFirst(t *testing.T) {
@@ -14,6 +15,6 @@ func TestContextMustBeFirst(t *testing.T) {
 
 func TestRegistrationIsWellFormed(t *testing.T) {
 	assert.NoError(t, ctxfirst.Registration.Validate())
-	assert.Equal(t, "yze/go/ctxfirst", ctxfirst.Registration.RuleID())
+	assert.Equal(t, "yze/ctxfirst", ctxfirst.Registration.RuleID())
 	assert.Same(t, ctxfirst.Analyzer, ctxfirst.Registration.Analyzer)
 }

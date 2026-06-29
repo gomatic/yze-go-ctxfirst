@@ -25,7 +25,6 @@ var Analyzer = &analysis.Analyzer{
 // Registration declares this analyzer to the yze framework.
 var Registration = goyze.Registration{
 	Name:       "ctxfirst",
-	Group:      "go",
 	Categories: []goyze.Category{"patterns"},
 	URL:        "https://docs.gomatic.dev/yze/go/ctxfirst",
 	Analyzer:   Analyzer,
