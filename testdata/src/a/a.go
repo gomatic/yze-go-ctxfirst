@@ -47,3 +47,17 @@ func closures() {
 
 // FuncField is a function-typed signature in a type definition.
 type FuncField func(n int, ctx context.Context) // want "context.Context must be the first parameter"
+
+// Ctx aliases context.Context. Since Go 1.23 an aliased type resolves to
+// *types.Alias, so the rule must unalias to still recognize it.
+type Ctx = context.Context
+
+// aliasBad takes the aliased context not first.
+func aliasBad(n int, ctx Ctx) { _ = n; _ = ctx } // want "context.Context must be the first parameter"
+
+// aliasGood leads with the aliased context.
+func aliasGood(ctx Ctx, n int) { _ = ctx; _ = n }
+
+// variadicBad takes a variadic context that is not first; each element is a
+// context.Context, so the non-first position violates the rule.
+func variadicBad(n int, ctxs ...context.Context) {} // want "context.Context must be the first parameter"

@@ -54,9 +54,15 @@ func checkParams(pass *analysis.Pass, params *ast.FieldList) {
 	}
 }
 
-// isContext reports whether expr names context.Context.
+// isContext reports whether expr names context.Context. A variadic parameter
+// (...context.Context) is unwrapped to its element type, and the resolved type
+// is unaliased so a context reached through a type alias (type C = context.Context)
+// resolves to *types.Named rather than the *types.Alias that Go 1.23+ produces.
 func isContext(pass *analysis.Pass, expr ast.Expr) bool {
-	named, ok := pass.TypesInfo.TypeOf(expr).(*types.Named)
+	if ellipsis, ok := expr.(*ast.Ellipsis); ok {
+		expr = ellipsis.Elt
+	}
+	named, ok := types.Unalias(pass.TypesInfo.TypeOf(expr)).(*types.Named)
 	if !ok || named.Obj().Pkg() == nil {
 		return false
 	}
