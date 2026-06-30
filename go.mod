@@ -1,4 +1,4 @@
-module github.com/gomatic/yze-ctxfirst
+module github.com/gomatic/yze-go-ctxfirst
 
 go 1.26.4
 

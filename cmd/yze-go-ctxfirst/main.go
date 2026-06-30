@@ -1,11 +1,11 @@
-// Command yze-ctxfirst runs the ctxfirst analyzer as a standalone go/analysis
+// Command yze-go-ctxfirst runs the ctxfirst analyzer as a standalone go/analysis
 // checker (text and -json output, and as a `go vet -vettool`).
 package main
 
 import (
 	"golang.org/x/tools/go/analysis/singlechecker"
 
-	ctxfirst "github.com/gomatic/yze-ctxfirst"
+	ctxfirst "github.com/gomatic/yze-go-ctxfirst"
 )
 
 // run is the analysis entry point, indirected so the binary's wiring is testable

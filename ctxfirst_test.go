@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/tools/go/analysis/analysistest"
 
-	ctxfirst "github.com/gomatic/yze-ctxfirst"
+	ctxfirst "github.com/gomatic/yze-go-ctxfirst"
 )
 
 func TestContextMustBeFirst(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/tools/go/analysis"
 
-	ctxfirst "github.com/gomatic/yze-ctxfirst"
+	ctxfirst "github.com/gomatic/yze-go-ctxfirst"
 )
 
 func TestMainRunsTheAnalyzer(t *testing.T) {
