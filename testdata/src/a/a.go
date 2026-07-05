@@ -14,8 +14,26 @@ func noCtx(n int) { _ = n }
 // noParams has no parameters.
 func noParams() {}
 
-// twoContexts leads with a context, so the trailing context is acceptable.
+// twoContexts leads with two contexts spelled as one field; a contiguous
+// leading prefix of contexts is acceptable.
 func twoContexts(a, b context.Context) { _ = a; _ = b }
+
+// twoContextsSplit spells the same two leading contexts as separate fields;
+// the positional parameter list is identical to twoContexts, so the verdict
+// must be too.
+func twoContextsSplit(a context.Context, b context.Context) { _ = a; _ = b }
+
+// interleaved leads with a context, but a later context follows a non-context
+// parameter, breaking the leading prefix.
+func interleaved(a context.Context, n int, b context.Context) { // want "context.Context must be the first parameter"
+	_, _, _ = a, n, b
+}
+
+// trailingGrouped declares two trailing contexts in one field after a
+// non-context parameter; the field is reported once.
+func trailingGrouped(n int, a, b context.Context) { // want "context.Context must be the first parameter"
+	_, _, _ = n, a, b
+}
 
 // T carries a method.
 type T struct{}

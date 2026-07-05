@@ -1,5 +1,9 @@
 // Package ctxfirst provides a go/analysis analyzer enforcing the gomatic Go idiom
-// that a context.Context parameter is always the first parameter.
+// that context.Context parameters form a contiguous leading prefix of the
+// positional parameter list. Parameters are judged by position, not by field
+// spelling — (a, b context.Context) and (a context.Context, b context.Context)
+// are identical — and any context.Context parameter that follows a non-context
+// parameter is reported.
 package ctxfirst
 
 import (
@@ -14,10 +18,10 @@ import (
 
 const message = "context.Context must be the first parameter"
 
-// Analyzer reports context.Context parameters that are not first.
+// Analyzer reports context.Context parameters that follow a non-context parameter.
 var Analyzer = &analysis.Analyzer{
 	Name:     "ctxfirst",
-	Doc:      "reports context.Context parameters that are not the first parameter",
+	Doc:      "reports context.Context parameters that do not form a leading prefix of the parameter list",
 	Requires: []*analysis.Analyzer{inspect.Analyzer},
 	Run:      run,
 }
@@ -30,8 +34,8 @@ var Registration = goyze.Registration{
 	Analyzer:   Analyzer,
 }
 
-// run reports each context.Context parameter that is not the first parameter.
-// It inspects every function signature — declarations, methods, interface
+// run reports each context.Context parameter that follows a non-context
+// parameter. It inspects every function signature — declarations, methods, interface
 // methods, function literals, and function-typed definitions — because the
 // context-first idiom is a contract on any signature taking a context.Context.
 func run(pass *analysis.Pass) (any, error) {
@@ -42,16 +46,39 @@ func run(pass *analysis.Pass) (any, error) {
 	return nil, nil
 }
 
-// checkParams reports a context.Context parameter that is not the first field.
-// Only the first field's position matters: a later field is never first
-// regardless of how many names earlier fields declare, so a plain field index
-// suffices.
+// checkParams reports each context.Context parameter that follows a
+// non-context parameter. Parameters are judged by position, not by field
+// index, so (a, b context.Context) and (a context.Context, b context.Context)
+// receive the same verdict. A field whose names span several offending
+// positions is reported once.
 func checkParams(pass *analysis.Pass, params *ast.FieldList) {
-	for i, field := range params.List {
-		if i > 0 && isContext(pass, field.Type) {
-			pass.Reportf(field.Type.Pos(), message)
+	var reported ast.Expr
+	sawNonContext := false
+	for _, typ := range flattenTypes(params.List) {
+		if !isContext(pass, typ) {
+			sawNonContext = true
+			continue
+		}
+		if sawNonContext && typ != reported {
+			reported = typ
+			pass.Reportf(typ.Pos(), message)
 		}
 	}
+}
+
+// flattenTypes expands fields into one type expression per parameter position.
+func flattenTypes(fields []*ast.Field) []ast.Expr {
+	var positions []ast.Expr
+	for _, field := range fields {
+		count := len(field.Names)
+		if count == 0 {
+			count = 1
+		}
+		for range count {
+			positions = append(positions, field.Type)
+		}
+	}
+	return positions
 }
 
 // isContext reports whether expr names context.Context. A variadic parameter
