@@ -33,6 +33,19 @@
 // nothing. It also gave no coverage at all to a codebase that names its own
 // context type, which is an ordinary framework habit, and told it nothing.
 //
+// One spelling still escapes that claim, and it is declared rather than left
+// to be discovered. Every signature judged here is one the source WRITES, so a
+// generic signature is judged at its declaration, where `Do(n Count, ctx T)` is
+// correctly not a context — and the INSTANTIATION, which has no source of its
+// own, is judged nowhere. `type Forged = inner[context.Context]` is the same
+// type as the honest interface, satisfied by the same implementations, called
+// through byte-identical call sites, and silent. Closing it means judging
+// instantiated types rather than written ones, which is a second walk with its
+// own false-positive surface, so it is recorded as
+// ctxfirst.a-type-parameter-instantiated-with-a-context-is-judged rather than
+// patched in the commit that found it. Until then this rule reaches every
+// spelling above and not that one.
+//
 // Each of the four signatures is matched by TYPE IDENTITY and never up to
 // Underlying(), so the answer is the compiler's answer: `Done() <-chan Unit`
 // with `type Unit struct{}` is a different method from `Done() <-chan
@@ -65,7 +78,14 @@
 // typed to buy silence. So the diagnostic carries its own message, naming a
 // remedy the compiler accepts because the ordinary one's is not one: "a
 // variadic context.Context parameter must not follow a non-context parameter:
-// take a leading ctx context.Context, or a leading []context.Context".
+// drop the ellipsis for a []context.Context, or lead with ctx context.Context".
+//
+// The remedy named first is the one that always works, because a
+// []context.Context is not a context by this rule's own contract and so belongs
+// among the non-contexts — which is where the variadic already is. An earlier
+// wording said "a leading []context.Context" and was wrong: leading, the slice
+// is the non-context that every context after it violates, so an author whose
+// signature also carried a real context traded one finding for another.
 //
 // # The verdict is a property of the SOURCE, deliberately
 //
@@ -149,12 +169,25 @@ const message = "a context.Context parameter must not follow a non-context param
 // variadicMessage states the same rule for a variadic context and names the
 // remedy that exists for it, because the ordinary message's remedy does not: the
 // Go spec permits ... only on the final parameter, so `func(ctxs
-// ...context.Context, n Count)` is not a program. Both remedies named here
-// compile, and both are stronger than the shape they replace — a variadic
-// context is an OPTIONAL one, so `Handle(3)` compiles under it and panics.
+// ...context.Context, n Count)` is not a program.
+//
+// The remedy named FIRST is the one that always works, and the reason is the
+// rule itself: a []context.Context is not a context, so it belongs among the
+// non-contexts, exactly where the variadic already sits. Dropping the ellipsis
+// is therefore silent wherever the parameter is, and it is stronger than the
+// shape it replaces — a variadic context is an OPTIONAL one, so `Handle(3)`
+// compiles and panics, while a slice parameter cannot be omitted.
+//
+// The first wording of this message said "a leading []context.Context" and was
+// wrong for the same reason: leading, the slice becomes the non-context that
+// every context after it violates, so an author whose signature also carried a
+// real context traded one finding for another. That is the manufactured
+// disablement this rule's own repair exists to remove, reintroduced by its
+// diagnostic — found by an adversarial pass and pinned by
+// TestVariadicMessageNamesARemedyThatSurvivesARealContext.
 // TestMessageStatesTheRuleTheDocDeclares pins this to the package comment too.
 const variadicMessage = "a variadic context.Context parameter must not follow a non-context parameter: " +
-	"take a leading ctx context.Context, or a leading []context.Context"
+	"drop the ellipsis for a []context.Context, or lead with ctx context.Context"
 
 // Analyzer reports context.Context parameters that follow a non-context parameter.
 var Analyzer = &analysis.Analyzer{

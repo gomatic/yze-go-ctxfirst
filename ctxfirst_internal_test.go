@@ -236,3 +236,37 @@ func f(n int, a, b context.Context) { _, _, _ = n, a, b }
 	assert.Equal(t, 15, fset.Position(diagnostics[0].Pos).Column, "a begins at column 15")
 	assert.Equal(t, 18, fset.Position(diagnostics[1].Pos).Column, "b begins at column 18")
 }
+
+// TestVariadicMessageNamesARemedyThatSurvivesARealContext is the shape the first
+// wording of variadicMessage got wrong, and the reason it was wrong is worth
+// keeping: a []context.Context is NOT a context by this rule's own contract, so
+// putting it FIRST makes it the non-context that every following context
+// violates. The message said "a leading []context.Context", and an author who
+// took that instruction verbatim on a signature that also carried a real
+// context traded one finding for another — the same manufactured-disablement
+// shape the variadic fix exists to remove. The remedy that always works is to
+// drop the ellipsis and leave the slice where it was.
+func TestVariadicMessageNamesARemedyThatSurvivesARealContext(t *testing.T) {
+	const dropped source = `package p
+
+import "context"
+
+func f(ctx context.Context, n int, ctxs []context.Context) { _, _, _ = ctx, n, ctxs }
+`
+	const leading source = `package p
+
+import "context"
+
+func f(ctxs []context.Context, ctx context.Context, n int) { _, _, _ = ctxs, ctx, n }
+`
+	_, droppedDiagnostics := analyze(t, dropped)
+	assert.Empty(t, droppedDiagnostics,
+		"dropping the ellipsis leaves the slice among the non-contexts, where a slice belongs")
+
+	_, leadingDiagnostics := analyze(t, leading)
+	assert.Len(t, leadingDiagnostics, 1,
+		"a LEADING slice is the non-context every following context violates, "+
+			"which is why the message must not name it")
+	assert.NotContains(t, variadicMessage, "leading []context.Context",
+		"the message must not prescribe the shape the assertion above proves is reported")
+}

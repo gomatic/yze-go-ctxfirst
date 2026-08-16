@@ -213,7 +213,7 @@ func implementorBad(n int, ctx Implementor) { _ = n; _ = ctx } // want "a contex
 // exemption's reason was that ... is forced to the final position, but the
 // author who writes ... chose that position freely — and the genuinely forced
 // case, a method whose order an interface dictates, is reported here too.
-func variadicBad(n int, ctxs ...context.Context) { // want "a variadic context.Context parameter must not follow a non-context parameter: take a leading ctx context.Context, or a leading \\[\\]context.Context"
+func variadicBad(n int, ctxs ...context.Context) { // want "a variadic context.Context parameter must not follow a non-context parameter: drop the ellipsis for a \\[\\]context.Context, or lead with ctx context.Context"
 	_, _ = n, ctxs
 }
 
@@ -221,12 +221,29 @@ func variadicBad(n int, ctxs ...context.Context) { // want "a variadic context.C
 // silent, so the finding above is about the position and not about the ellipsis.
 func variadicFirst(ctxs ...context.Context) { _ = ctxs }
 
-// variadicRemedy is the remedy variadicBad's message prescribes, compiled here
-// so the instruction is known to be takeable rather than assumed to be. It is
-// also stronger than the shape it replaces: a variadic context is an optional
-// one, so `variadicBad(3)` compiles and panics, while this cannot be called
-// without a slice.
-func variadicRemedy(ctxs []context.Context, n int) { _, _ = ctxs, n }
+// variadicRemedy is the remedy variadicBad's message prescribes: the ellipsis
+// dropped, the slice left where it was. Compiled here so the instruction is
+// known to be takeable rather than assumed to be, and stronger than the shape
+// it replaces, since a variadic context is an optional one — `variadicBad(3)`
+// compiles and panics, and this cannot be called without a slice.
+func variadicRemedy(n int, ctxs []context.Context) { _, _ = n, ctxs }
+
+// variadicRemedyBesideAContext is the shape that condemned the FIRST wording of
+// that message, which said "a leading []context.Context". A slice is not a
+// context, so leading it becomes the non-context every following context
+// violates: the author who took the old instruction verbatim here traded one
+// finding for another. Dropping the ellipsis leaves the slice among the
+// non-contexts, where it belongs, and is silent.
+func variadicRemedyBesideAContext(ctx context.Context, n int, ctxs []context.Context) {
+	_, _, _ = ctx, n, ctxs
+}
+
+// variadicRemedyLeadingIsReported is that old instruction taken literally, and
+// it is a finding. The pair is the case: a remedy is only proven by the shape
+// where it can fail.
+func variadicRemedyLeadingIsReported(ctxs []context.Context, ctx context.Context, n int) { // want "a context.Context parameter must not follow a non-context parameter"
+	_, _, _ = ctxs, ctx, n
+}
 
 // pointerSilent takes a pointer to a context after a non-context parameter. A
 // pointer to an interface has an empty method set, so it is not a context and
