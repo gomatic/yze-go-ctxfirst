@@ -13,12 +13,12 @@ func TestContextMustBeFirst(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), ctxfirst.Analyzer, "a")
 }
 
-// TestRunJudgesNoPackageOutOfContextsReach runs the analyzer over a package the
-// build carries to package context by no path. It has no context to find, so it
-// walks no signature — the shapes it declares would be reported in a package
-// that does reach context.
-func TestRunJudgesNoPackageOutOfContextsReach(t *testing.T) {
-	analysistest.Run(t, analysistest.TestData(), ctxfirst.Analyzer, "nocontext")
+// TestAHandWrittenContextIsJudged runs the analyzer over a package that reaches
+// package context by no import path and declares a context anyway. Its method
+// set IS context.Context's, so it stands wherever a context is wanted and the
+// rule applies to it; the sibling carrying two of the four methods does not.
+func TestAHandWrittenContextIsJudged(t *testing.T) {
+	analysistest.Run(t, analysistest.TestData(), ctxfirst.Analyzer, "handwritten")
 }
 
 func TestRegistrationIsWellFormed(t *testing.T) {

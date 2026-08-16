@@ -35,9 +35,24 @@ func interleaved(a context.Context, n int, b context.Context) { // want "a conte
 }
 
 // trailingGrouped declares two trailing contexts in one field after a
-// non-context parameter; the field is reported once.
+// non-context parameter; the field is one position and is reported once.
 func trailingGrouped(n int, a, b context.Context) { // want "a context.Context parameter must not follow a non-context parameter"
 	_, _, _ = n, a, b
+}
+
+// twoBuried buries two contexts behind two DIFFERENT non-context parameters, so
+// the two offences are separate fields and both must be reported. Every other
+// fixture in this repo and every corpus case holds the count at one, which let a
+// `return` after the report halve the analyzer's output while the whole suite,
+// the corpus and the coverage gate stayed green — and an author who fixed the
+// first finding would have been told the signature was clean.
+func twoBuried(
+	n int,
+	first context.Context, // want "a context.Context parameter must not follow a non-context parameter"
+	s string,
+	second context.Context, // want "a context.Context parameter must not follow a non-context parameter"
+) {
+	_, _, _, _ = n, first, s, second
 }
 
 // T carries a method.
@@ -113,10 +128,10 @@ func paramGood[C context.Context](ctx C, n int) { _ = ctx; _ = n }
 // was silent on values it had already agreed were contexts.
 func useContext(ctx context.Context) { _ = ctx }
 
-func consumeDefined(ctx Defined)                  { useContext(ctx) }
-func consumeEmbedder(ctx Embedder)                { useContext(ctx) }
+func consumeDefined(ctx Defined)                   { useContext(ctx) }
+func consumeEmbedder(ctx Embedder)                 { useContext(ctx) }
 func produceEmbedder(ctx context.Context) Embedder { return ctx }
-func consumeParam[C context.Context](ctx C)       { useContext(ctx) }
+func consumeParam[C context.Context](ctx C)        { useContext(ctx) }
 
 // Lookalike spells context.Context's four method names and is NOT a context:
 // its Deadline returns a bool pair rather than (time.Time, bool), so no value

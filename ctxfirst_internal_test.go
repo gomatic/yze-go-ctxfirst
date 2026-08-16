@@ -19,6 +19,9 @@ import (
 // source is a Go file's text, type-checked to build a pass by hand.
 type source string
 
+// lineNumber is a 1-based line in a constructed source.
+type lineNumber int
+
 // TestMessageStatesTheRuleTheDocDeclares pins the diagnostic to the package
 // comment. The message used to assert "context.Context must be the first
 // parameter" — the rule as it stood before the leading-prefix widening — and
@@ -60,77 +63,35 @@ func f(n int, ctx context.Context) { _ = n; _ = ctx }
 	assert.Equal(t, message, diagnostics[0].Message)
 }
 
-// TestDeclaredContextNeedsThePathAndTheDeclaration covers both halves of the
-// test that resolves the interface, and the first half is a forgery case rather
-// than a tidiness one. Only the standard library can hold the import path
-// "context"; a package DIRECTORY named context is free, so a package clause and
-// an empty `type Context interface{}` inside one would otherwise be accepted as
-// the contract — and every type implements an empty interface, so every
-// parameter would become a context and the rule would fall silent everywhere
-// that package is reachable. Resolving by import path costs the forger the one
-// thing they cannot acquire. Reading pkg.Name() instead of pkg.Path() is a
-// one-word change that survives every other test in this repo.
-func TestDeclaredContextNeedsThePathAndTheDeclaration(t *testing.T) {
-	assert.Nil(t, declaredContext(forgedContext(t)), "only the import path \"context\" declares the contract")
-
-	hollow := types.NewPackage("context", "context")
-	hollow.MarkComplete()
-	assert.Nil(t, declaredContext(hollow), "package context with no Context declaration yields nothing")
-}
-
-// forgedContext builds the package a forger can write: the directory name
-// "context", a package clause to match, and an empty interface called Context
-// that every type in the build satisfies.
-func forgedContext(t *testing.T) *types.Package {
-	t.Helper()
-	pkg := types.NewPackage("example.com/mod/context", "context")
-	empty := types.NewInterfaceType(nil, nil)
-	empty.Complete()
-	name := types.NewTypeName(token.NoPos, pkg, "Context", nil)
-	types.NewNamed(name, empty, nil)
-	pkg.Scope().Insert(name)
-	pkg.MarkComplete()
-	require.NotNil(t, pkg.Scope().Lookup("Context"))
-	return pkg
-}
-
-// TestVisitedStopsSearchImportsOnAnImportCycle drives the visited guard. go/types
-// will hold a cyclic import graph even though a Go build never produces one,
-// and the walk without the guard does not return: deleting `seen[pkg]` makes
-// this test die with a stack overflow rather than fail.
-func TestVisitedStopsSearchImportsOnAnImportCycle(t *testing.T) {
-	first := types.NewPackage("example.com/first", "first")
-	second := types.NewPackage("example.com/second", "second")
-	first.SetImports([]*types.Package{second})
-	second.SetImports([]*types.Package{first})
-
-	assert.Nil(t, searchImports(first, visited{}))
-}
-
-// TestContextInterfaceIsFoundThroughATransitiveImport pins that the search is
-// transitive. A package can hold a context parameter while importing context by
-// no direct path — the type comes from a dependency — so a search of the direct
-// imports alone goes silent on exactly the codebases that name their own
-// context type.
-func TestContextInterfaceIsFoundThroughATransitiveImport(t *testing.T) {
+// TestEveryOffendingParameterIsReported drives the multiplicity of the rule,
+// which every fixture in this repo and every corpus case held constant at one.
+// Adding a `return` after the report halves the analyzer's output on a
+// signature burying two contexts, and it survived the whole suite, all twelve
+// corpus cases and the 100.0% coverage gate — an author who fixed the first
+// finding would have been told the signature was clean.
+func TestEveryOffendingParameterIsReported(t *testing.T) {
 	const src source = `package p
 
-import "net/http"
+import "context"
 
-var _ = http.DefaultClient
+func f(
+	n int,
+	first context.Context,
+	s string,
+	second context.Context,
+) {
+	_, _, _, _ = n, first, s, second
+}
 `
-	_, pkg := check(t, src)
-	assert.NotContains(t, importPaths(pkg), "context", "the fixture must not import context directly")
-	assert.NotNil(t, contextInterface(pkg))
+	fset, diagnostics := analyze(t, src)
+	require.Len(t, diagnostics, 2, "one finding per offending field, not one per signature")
+	assert.Equal(t, 7, fset.Position(diagnostics[0].Pos).Line)
+	assert.Equal(t, 9, fset.Position(diagnostics[1].Pos).Line)
 }
 
-// importPaths names pkg's direct imports.
-func importPaths(pkg *types.Package) []string {
-	paths := make([]string, 0, len(pkg.Imports()))
-	for _, imported := range pkg.Imports() {
-		paths = append(paths, imported.Path())
-	}
-	return paths
+// reportedLine is the 1-based line a diagnostic names.
+func reportedLine(fset *token.FileSet, diagnostic analysis.Diagnostic) lineNumber {
+	return lineNumber(fset.Position(diagnostic.Pos).Line)
 }
 
 // analyze runs the analyzer over src and returns the diagnostics it reported.
@@ -141,14 +102,13 @@ func analyze(t *testing.T, src source) (*token.FileSet, []analysis.Diagnostic) {
 	require.NoError(t, err)
 	info := &types.Info{Types: map[ast.Expr]types.TypeAndValue{}, Defs: map[*ast.Ident]types.Object{}}
 	conf := types.Config{Importer: importer.Default()}
-	pkg, err := conf.Check("example.test/p", fset, []*ast.File{file}, info)
+	_, err = conf.Check("example.test/p", fset, []*ast.File{file}, info)
 	require.NoError(t, err)
 
 	var diagnostics []analysis.Diagnostic
 	pass := &analysis.Pass{
 		Fset:      fset,
 		Files:     []*ast.File{file},
-		Pkg:       pkg,
 		TypesInfo: info,
 		ResultOf:  map[*analysis.Analyzer]any{inspect.Analyzer: inspector.New([]*ast.File{file})},
 		Report:    func(d analysis.Diagnostic) { diagnostics = append(diagnostics, d) },
@@ -157,17 +117,4 @@ func analyze(t *testing.T, src source) (*token.FileSet, []analysis.Diagnostic) {
 	require.NoError(t, err)
 	require.Nil(t, result)
 	return fset, diagnostics
-}
-
-// check type-checks src and returns its file and package.
-func check(t *testing.T, src source) (*ast.File, *types.Package) {
-	t.Helper()
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "p.go", string(src), 0)
-	require.NoError(t, err)
-	conf := types.Config{Importer: importer.Default()}
-	pkg, err := conf.Check("example.test/p", fset, []*ast.File{file}, nil)
-	require.NoError(t, err)
-	require.True(t, strings.HasSuffix(pkg.Path(), "/p"))
-	return file, pkg
 }
