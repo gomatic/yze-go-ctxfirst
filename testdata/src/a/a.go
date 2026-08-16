@@ -1,12 +1,15 @@
 package a
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // good has context.Context first.
 func good(ctx context.Context, n int) { _ = ctx; _ = n }
 
 // bad has context.Context not first.
-func bad(n int, ctx context.Context) { _ = n; _ = ctx } // want "context.Context must be the first parameter"
+func bad(n int, ctx context.Context) { _ = n; _ = ctx } // want "a context.Context parameter must not follow a non-context parameter"
 
 // noCtx has no context parameter.
 func noCtx(n int) { _ = n }
@@ -24,14 +27,16 @@ func twoContexts(a, b context.Context) { _ = a; _ = b }
 func twoContextsSplit(a context.Context, b context.Context) { _ = a; _ = b }
 
 // interleaved leads with a context, but a later context follows a non-context
-// parameter, breaking the leading prefix.
-func interleaved(a context.Context, n int, b context.Context) { // want "context.Context must be the first parameter"
+// parameter, breaking the leading prefix. A context.Context already IS the
+// first parameter here, which is why the message states the prefix rule rather
+// than asking b to become a position that is taken.
+func interleaved(a context.Context, n int, b context.Context) { // want "a context.Context parameter must not follow a non-context parameter"
 	_, _, _ = a, n, b
 }
 
 // trailingGrouped declares two trailing contexts in one field after a
 // non-context parameter; the field is reported once.
-func trailingGrouped(n int, a, b context.Context) { // want "context.Context must be the first parameter"
+func trailingGrouped(n int, a, b context.Context) { // want "a context.Context parameter must not follow a non-context parameter"
 	_, _, _ = n, a, b
 }
 
@@ -39,43 +44,146 @@ func trailingGrouped(n int, a, b context.Context) { // want "context.Context mus
 type T struct{}
 
 // method has context.Context not first.
-func (T) method(n int, ctx context.Context) { _ = n; _ = ctx } // want "context.Context must be the first parameter"
+func (T) method(n int, ctx context.Context) { _ = n; _ = ctx } // want "a context.Context parameter must not follow a non-context parameter"
 
 // methodGood has context.Context first.
 func (T) methodGood(ctx context.Context, n int) { _ = ctx; _ = n }
 
 // unnamed has unnamed parameters with context not first.
-func unnamed(int, context.Context) {} // want "context.Context must be the first parameter"
+func unnamed(int, context.Context) {} // want "a context.Context parameter must not follow a non-context parameter"
 
 // Iface is an interface whose method signatures are subject to the convention.
 type Iface interface {
 	// Bad has context.Context not first.
-	Bad(n int, ctx context.Context) // want "context.Context must be the first parameter"
+	Bad(n int, ctx context.Context) // want "a context.Context parameter must not follow a non-context parameter"
 	// Good has context.Context first.
 	Good(ctx context.Context, n int)
 }
 
 // closures exercises function literals, which carry their own signatures.
 func closures() {
-	bad := func(n int, ctx context.Context) { _ = n; _ = ctx } // want "context.Context must be the first parameter"
+	bad := func(n int, ctx context.Context) { _ = n; _ = ctx } // want "a context.Context parameter must not follow a non-context parameter"
 	good := func(ctx context.Context, n int) { _ = ctx; _ = n }
 	bad(0, context.Background())
 	good(context.Background(), 0)
 }
 
 // FuncField is a function-typed signature in a type definition.
-type FuncField func(n int, ctx context.Context) // want "context.Context must be the first parameter"
+type FuncField func(n int, ctx context.Context) // want "a context.Context parameter must not follow a non-context parameter"
 
 // Ctx aliases context.Context. Since Go 1.23 an aliased type resolves to
-// *types.Alias, so the rule must unalias to still recognize it.
+// *types.Alias, so a spelling test would have to unalias to still recognize it.
 type Ctx = context.Context
 
 // aliasBad takes the aliased context not first.
-func aliasBad(n int, ctx Ctx) { _ = n; _ = ctx } // want "context.Context must be the first parameter"
+func aliasBad(n int, ctx Ctx) { _ = n; _ = ctx } // want "a context.Context parameter must not follow a non-context parameter"
 
 // aliasGood leads with the aliased context.
 func aliasGood(ctx Ctx, n int) { _ = ctx; _ = n }
 
-// variadicBad takes a variadic context that is not first; each element is a
-// context.Context, so the non-first position violates the rule.
-func variadicBad(n int, ctxs ...context.Context) {} // want "context.Context must be the first parameter"
+// Defined is a type written over context.Context. It is mutually assignable
+// with context.Context — consumeDefined passes one straight to useContext with
+// no conversion — so it is a context and the rule applies to it.
+type Defined context.Context
+
+// definedBad takes a defined context not first.
+func definedBad(n int, ctx Defined) { _ = n; _ = ctx } // want "a context.Context parameter must not follow a non-context parameter"
+
+// definedGood leads with the defined context.
+func definedGood(ctx Defined, n int) { _ = ctx; _ = n }
+
+// Embedder is an interface embedding context.Context, so every value of it is
+// a context.
+type Embedder interface{ context.Context }
+
+// embedderBad takes an embedding interface not first.
+func embedderBad(n int, ctx Embedder) { _ = n; _ = ctx } // want "a context.Context parameter must not follow a non-context parameter"
+
+// embedderGood leads with the embedding interface.
+func embedderGood(ctx Embedder, n int) { _ = ctx; _ = n }
+
+// paramBad takes a type parameter constrained to context.Context not first.
+func paramBad[C context.Context](n int, ctx C) { _ = n; _ = ctx } // want "a context.Context parameter must not follow a non-context parameter"
+
+// paramGood leads with the constrained type parameter.
+func paramGood[C context.Context](ctx C, n int) { _ = ctx; _ = n }
+
+// useContext proves the shapes above really are contexts: each is passed to it
+// with no conversion, so a rule that reported only the context.Context spelling
+// was silent on values it had already agreed were contexts.
+func useContext(ctx context.Context) { _ = ctx }
+
+func consumeDefined(ctx Defined)                  { useContext(ctx) }
+func consumeEmbedder(ctx Embedder)                { useContext(ctx) }
+func produceEmbedder(ctx context.Context) Embedder { return ctx }
+func consumeParam[C context.Context](ctx C)       { useContext(ctx) }
+
+// Lookalike spells context.Context's four method names and is NOT a context:
+// its Deadline returns a bool pair rather than (time.Time, bool), so no value
+// of it can be used where a context is wanted. It sits at the boundary of the
+// method-set test and must stay silent.
+type Lookalike interface {
+	Deadline() (deadline bool, ok bool)
+	Done() <-chan struct{}
+	Err() error
+	Value(key any) any
+}
+
+// lookalikeSilent holds a Lookalike after a non-context parameter and reports
+// nothing, because a Lookalike does not implement context.Context.
+func lookalikeSilent(n int, ctx Lookalike) { _ = n; _ = ctx }
+
+// Implementor carries context.Context's whole method set on a concrete type, so
+// it IS a context however it is spelled.
+type Implementor struct{}
+
+func (Implementor) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (Implementor) Done() <-chan struct{}       { return nil }
+func (Implementor) Err() error                  { return nil }
+func (Implementor) Value(key any) any           { _ = key; return nil }
+
+// implementorBad takes a hand-written context implementation not first.
+func implementorBad(n int, ctx Implementor) { _ = n; _ = ctx } // want "a context.Context parameter must not follow a non-context parameter"
+
+// variadicSilent takes a variadic context that is not first and is NOT
+// reported. Its type is []context.Context, which carries no context, and the
+// Go spec permits ... only on the final parameter — `func(ctxs
+// ...context.Context, n int)` does not compile — so the position is forced and
+// there is no reordering an author could be asked for. Silence here is the
+// exemption stated in the package comment, not a limitation the test blesses.
+func variadicSilent(n int, ctxs ...context.Context) { _ = n; _ = ctxs }
+
+// variadicFirst puts the same variadic first, which is equally silent; the two
+// together prove the verdict does not turn on position for a variadic.
+func variadicFirst(ctxs ...context.Context) { _ = ctxs }
+
+// pointerSilent takes a pointer to a context after a non-context parameter. A
+// pointer to an interface has an empty method set, so it is not a context and
+// is not this rule's finding.
+func pointerSilent(n int, ctx *context.Context) { _ = n; _ = ctx }
+
+// universeNamed holds a universe-scope named type after a non-context
+// parameter. error has no package, so a rule resolving a type's package to
+// compare its path dereferences nil here and dies; the method-set test never
+// asks. Silent, and its sibling below pins that the silence is about error and
+// not about position.
+func universeNamed(n int, err error) { _ = n; _ = err }
+
+// universeNamedFirst is universeNamed with the same types in the other order,
+// so a rule that had simply stopped reporting would leave both silent for the
+// same wrong reason.
+func universeNamedFirst(err error, n int) { _ = err; _ = n }
+
+// cancelFuncSilent holds another named type FROM package context after a
+// non-context parameter. context.CancelFunc is not a context, so a rule keyed
+// on the package path alone reports it and this case says it must not.
+func cancelFuncSilent(n int, cancel context.CancelFunc) { _ = n; _ = cancel }
+
+// Context is a locally-declared type named Context, the shape gin.Context and
+// cli.Context take in the wild.
+type Context struct{ deadline time.Time }
+
+// localContextSilent holds it after a non-context parameter. It carries none of
+// context.Context's methods, so a rule keyed on the type name alone reports it
+// and this case says it must not.
+func localContextSilent(n int, c Context) { _ = n; _ = c }
