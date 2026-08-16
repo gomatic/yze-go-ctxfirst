@@ -5,9 +5,16 @@
 //
 // Parameters are judged by position, not by field spelling — (a, b
 // context.Context) and (a context.Context, b context.Context) are identical —
-// and EVERY offending parameter is reported, each at its own field's type, so a
+// and EVERY offending parameter is reported, each at its own name, so a
 // signature burying two contexts behind two different non-contexts draws two
-// findings and fixing one of them does not silence the other.
+// findings and fixing one of them does not silence the other. A field declaring
+// two names declares two parameters and draws two findings; reporting once per
+// FIELD made the count a property of the spelling, which is the thing the first
+// sentence denies, and it also weakened the promise above, because in the
+// grouped spelling fixing one of the two names was answered with the same
+// single finding. The report sits at the parameter's own name rather than at
+// its field's type because both drivers collapse diagnostics that share a
+// position, so a count honest inside the analyzer would arrive halved.
 //
 // # A parameter is a context when it CARRIES context.Context's method set
 //
@@ -26,6 +33,40 @@
 // nothing. It also gave no coverage at all to a codebase that names its own
 // context type, which is an ordinary framework habit, and told it nothing.
 //
+// Each of the four signatures is matched by TYPE IDENTITY and never up to
+// Underlying(), so the answer is the compiler's answer: `Done() <-chan Unit`
+// with `type Unit struct{}` is a different method from `Done() <-chan
+// struct{}`, and go build says so. Three positions used to unwrap to
+// Underlying(), which reported three shapes no compiler will accept as a
+// context and prescribed a reorder their author did not owe — a false positive
+// answered with a baseline, which is the population this suite exists to
+// remove. An ALIAS still answers yes, because an alias IS the type it aliases:
+// `type Nothing = struct{}` and `Done() <-chan Nothing` is a context.
+//
+// # A variadic context is reported, with the remedy that exists for it
+//
+// `func f(n Count, ctxs ...context.Context)` is reported. It was exempt for one
+// revision on the ground that the Go spec permits ... only on the final
+// parameter, so the position is forced and no reordering remedy exists. The
+// first half is true and the conclusion does not follow: the position is forced
+// only once the parameter is variadic, and being variadic is the author's own
+// choice. Measured, the exemption inverted the rule's economics — the call site
+// f(3, ctx) is byte-identical and still compiles when a declaration is changed
+// from `ctx context.Context` to `ctxs ...context.Context`, while the honest
+// reorder breaks every call site in the fleet, so evading cost one token and
+// nothing else while complying cost an API change. It also deleted a
+// compile-time guarantee: a variadic context is an OPTIONAL context, so f(3)
+// compiles and panics.
+//
+// Forcedness is not an exemption criterion anywhere else in this rule either —
+// the section below reports a method whose parameter order an interface
+// dictates, where reordering genuinely does not compile — so it cannot be one
+// here, and no test separates a variadic an author was forced into from one
+// typed to buy silence. So the diagnostic carries its own message, naming a
+// remedy the compiler accepts because the ordinary one's is not one: "a
+// variadic context.Context parameter must not follow a non-context parameter:
+// take a leading ctx context.Context, or a leading []context.Context".
+//
 // # The verdict is a property of the SOURCE, deliberately
 //
 // Nothing here consults the analyzed package's imports, and that is a
@@ -42,17 +83,19 @@
 //
 // # What is not a context, and so is not reported
 //
-//  1. A variadic ...context.Context. The parameter's type is []context.Context,
-//     a slice, whose method set is empty — and the Go spec permits ... only on
-//     the final parameter, so its position is forced and no reordering remedy
-//     exists. `func f(n int, ctxs ...context.Context)` is silent.
-//  2. A pointer to a context (*context.Context). A pointer to an interface has
+//  1. A pointer to a context (*context.Context). A pointer to an interface has
 //     an empty method set and carries no context; it is its own defect and not
 //     this rule's.
-//  3. A type carrying the four METHOD NAMES with any other signature — a
+//  2. A type carrying the four METHOD NAMES with any other signature — a
 //     Deadline returning something that is not time.Time, a send-only Done, an
 //     Err returning a package's own error type, a Value taking a concrete key.
 //     None of them can stand where a context is wanted, so none is judged.
+//  3. A type carrying the four method names over DEFINED types with the right
+//     underlying types — Done() <-chan Unit, Deadline() (time.Time, Flag),
+//     Value(Anything) Anything. The compiler refuses every one of them as a
+//     context.Context, so this rule does too. `[]context.Context` is the same
+//     answer reached the same way, and it is the remedy the variadic
+//     diagnostic prescribes.
 //
 // # A signature somebody else owns is reported, and its remedy may not exist
 //
@@ -103,6 +146,16 @@ import (
 // package comment above so the two cannot drift apart again.
 const message = "a context.Context parameter must not follow a non-context parameter"
 
+// variadicMessage states the same rule for a variadic context and names the
+// remedy that exists for it, because the ordinary message's remedy does not: the
+// Go spec permits ... only on the final parameter, so `func(ctxs
+// ...context.Context, n Count)` is not a program. Both remedies named here
+// compile, and both are stronger than the shape they replace — a variadic
+// context is an OPTIONAL one, so `Handle(3)` compiles under it and panics.
+// TestMessageStatesTheRuleTheDocDeclares pins this to the package comment too.
+const variadicMessage = "a variadic context.Context parameter must not follow a non-context parameter: " +
+	"take a leading ctx context.Context, or a leading []context.Context"
+
 // Analyzer reports context.Context parameters that follow a non-context parameter.
 var Analyzer = &analysis.Analyzer{
 	Name:     "ctxfirst",
@@ -128,20 +181,56 @@ func run(pass *analysis.Pass) (any, error) {
 	return nil, nil
 }
 
-// checkParams reports EVERY context parameter that follows a non-context
-// parameter, each at its own field's type. A field is one position however many
-// names it declares, so (a, b context.Context) and (a context.Context, b
-// context.Context) receive the same verdict and a field is reported once.
+// checkParams reports EVERY offending PARAMETER that follows a non-context
+// parameter, once each. A field declaring several names declares that many
+// parameters, so (a, b context.Context) draws the same count as (a
+// context.Context, b context.Context) — reporting once per field made the count
+// a property of the spelling, and weakened the promise that fixing one finding
+// does not silence another, since in the grouped spelling it did.
 func checkParams(pass *analysis.Pass, params *ast.FieldList) {
 	sawNonContext := false
 	for _, field := range params.List {
-		if !isContext(pass, field.Type) {
+		if !isContext(pass, subjectOf(field)) {
 			sawNonContext = true
 			continue
 		}
-		if sawNonContext {
-			pass.Reportf(field.Type.Pos(), message)
+		if !sawNonContext {
+			continue
 		}
+		reportField(pass, field)
+	}
+}
+
+// subjectOf is the type expression whose method set decides whether a field
+// carries a context. For a variadic field that is the ELEMENT type: `ctxs
+// ...context.Context` has type []context.Context, whose method set is empty, so
+// reading the field's own type answered no to every variadic and made `...` a
+// one-token switch an author types to leave the rule behind.
+func subjectOf(field *ast.Field) ast.Expr {
+	if ellipsis, isVariadic := field.Type.(*ast.Ellipsis); isVariadic {
+		return ellipsis.Elt
+	}
+	return field.Type
+}
+
+// reportField reports the field once per parameter it declares, at that
+// parameter's own name — not at the field's type, where two findings on one
+// field would arrive as one. go/analysis collapses diagnostics sharing a
+// position, analyzer and message, and go-yze's driver collapses them again on
+// {rule, path, message, line, column}, so a count honest inside the analyzer
+// would be wrong in every instrument that reads it. An unnamed parameter has no
+// name to point at and is reported at its type.
+func reportField(pass *analysis.Pass, field *ast.Field) {
+	text := message
+	if _, isVariadic := field.Type.(*ast.Ellipsis); isVariadic {
+		text = variadicMessage
+	}
+	if len(field.Names) == 0 {
+		pass.Report(analysis.Diagnostic{Pos: field.Type.Pos(), Message: text})
+		return
+	}
+	for _, name := range field.Names {
+		pass.Report(analysis.Diagnostic{Pos: name.Pos(), Message: text})
 	}
 }
 

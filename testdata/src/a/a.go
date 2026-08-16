@@ -34,9 +34,20 @@ func interleaved(a context.Context, n int, b context.Context) { // want "a conte
 	_, _, _ = a, n, b
 }
 
-// trailingGrouped declares two trailing contexts in one field after a
-// non-context parameter; the field is one position and is reported once.
-func trailingGrouped(n int, a, b context.Context) { // want "a context.Context parameter must not follow a non-context parameter"
+// trailingGrouped declares two trailing contexts in ONE field after a
+// non-context parameter. A field declaring two names declares two parameters,
+// so it draws two findings — the same count as trailingSplit below, whose
+// positional list is identical. Reporting once per field made the count a
+// property of the spelling, which the package comment denies twice.
+func trailingGrouped(n int, a, b context.Context) { // want "a context.Context parameter must not follow a non-context parameter" "a context.Context parameter must not follow a non-context parameter"
+	_, _, _ = n, a, b
+}
+
+// trailingSplit spells trailingGrouped's positional list as separate fields.
+// The two are paired here in the VIOLATING direction, which is what the corpus
+// and this file only ever did in the conforming direction, where both are
+// silent and 0 == 0 discriminates nothing.
+func trailingSplit(n int, a context.Context, b context.Context) { // want "a context.Context parameter must not follow a non-context parameter" "a context.Context parameter must not follow a non-context parameter"
 	_, _, _ = n, a, b
 }
 
@@ -148,6 +159,40 @@ type Lookalike interface {
 // nothing, because a Lookalike does not implement context.Context.
 func lookalikeSilent(n int, ctx Lookalike) { _ = n; _ = ctx }
 
+// Unit is an empty struct under another name. It is a DEFINED type, so it is
+// not struct{} — `var _ context.Context = DefinedElem(nil)` does not compile.
+type Unit struct{}
+
+// DefinedElem deviates from context.Context in exactly one position, by naming
+// a defined type whose UNDERLYING type is the right one. A contract compared up
+// to Underlying() answers yes here and the compiler answers no.
+type DefinedElem interface {
+	Deadline() (time.Time, bool)
+	Done() <-chan Unit
+	Err() error
+	Value(key any) any
+}
+
+// definedElemSilent holds it after a non-context parameter and reports nothing,
+// because no value of it can stand where a context is wanted.
+func definedElemSilent(n int, c DefinedElem) { _ = n; _ = c }
+
+// Nothing is an ALIAS of the empty struct, which IS the empty struct.
+type Nothing = struct{}
+
+// AliasedElem is the other side of that boundary: the compiler accepts it as a
+// context.Context, so a fix narrowing to the spelling `struct{}` goes silent on
+// a genuine context here.
+type AliasedElem interface {
+	Deadline() (time.Time, bool)
+	Done() <-chan Nothing
+	Err() error
+	Value(key any) any
+}
+
+// aliasedElemBad holds the aliased-element context after a non-context.
+func aliasedElemBad(n int, c AliasedElem) { _ = n; _ = c } // want "a context.Context parameter must not follow a non-context parameter"
+
 // Implementor carries context.Context's whole method set on a concrete type, so
 // it IS a context however it is spelled.
 type Implementor struct{}
@@ -160,17 +205,28 @@ func (Implementor) Value(key any) any           { _ = key; return nil }
 // implementorBad takes a hand-written context implementation not first.
 func implementorBad(n int, ctx Implementor) { _ = n; _ = ctx } // want "a context.Context parameter must not follow a non-context parameter"
 
-// variadicSilent takes a variadic context that is not first and is NOT
-// reported. Its type is []context.Context, which carries no context, and the
-// Go spec permits ... only on the final parameter — `func(ctxs
-// ...context.Context, n int)` does not compile — so the position is forced and
-// there is no reordering an author could be asked for. Silence here is the
-// exemption stated in the package comment, not a limitation the test blesses.
-func variadicSilent(n int, ctxs ...context.Context) { _ = n; _ = ctxs }
+// variadicBad takes a variadic context that is not first and IS reported, with
+// the message that names a remedy the compiler accepts. Exempting this shape
+// made the rule switchable off by one token at no cost to anybody: the call
+// site `variadicBad(3, ctx)` is byte-identical under the non-variadic spelling
+// and compiles under both, while the honest reorder breaks every call site. The
+// exemption's reason was that ... is forced to the final position, but the
+// author who writes ... chose that position freely — and the genuinely forced
+// case, a method whose order an interface dictates, is reported here too.
+func variadicBad(n int, ctxs ...context.Context) { // want "a variadic context.Context parameter must not follow a non-context parameter: take a leading ctx context.Context, or a leading \\[\\]context.Context"
+	_, _ = n, ctxs
+}
 
-// variadicFirst puts the same variadic first, which is equally silent; the two
-// together prove the verdict does not turn on position for a variadic.
+// variadicFirst puts the same variadic first, where it breaks no prefix and is
+// silent, so the finding above is about the position and not about the ellipsis.
 func variadicFirst(ctxs ...context.Context) { _ = ctxs }
+
+// variadicRemedy is the remedy variadicBad's message prescribes, compiled here
+// so the instruction is known to be takeable rather than assumed to be. It is
+// also stronger than the shape it replaces: a variadic context is an optional
+// one, so `variadicBad(3)` compiles and panics, while this cannot be called
+// without a slice.
+func variadicRemedy(ctxs []context.Context, n int) { _, _ = ctxs, n }
 
 // pointerSilent takes a pointer to a context after a non-context parameter. A
 // pointer to an interface has an empty method set, so it is not a context and

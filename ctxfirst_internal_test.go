@@ -33,7 +33,10 @@ func TestMessageStatesTheRuleTheDocDeclares(t *testing.T) {
 	file, err := parser.ParseFile(fset, "ctxfirst.go", nil, parser.ParseComments)
 	require.NoError(t, err)
 	require.NotNil(t, file.Doc)
-	assert.Contains(t, unwrapped(file.Doc.Text()), message)
+	doc := unwrapped(file.Doc.Text())
+	assert.Contains(t, doc, message)
+	assert.Contains(t, doc, variadicMessage,
+		"the variadic diagnostic is a second message and states a second remedy, so the doc owes it the same")
 }
 
 // unwrapped joins a doc comment's wrapped lines so a sentence spanning two of
@@ -43,12 +46,15 @@ func unwrapped(text string) string {
 	return strings.Join(strings.Fields(text), " ")
 }
 
-// TestReportedColumnIsTheOffendingParameterType pins the column of the
-// diagnostic. analysistest matches by line and the corpus Finding is {rule,
-// path, line}, so moving the report from the parameter's type to the parameter
-// list left every instrument in the suite silent while every diagnostic in
-// every repo moved to the opening parenthesis.
-func TestReportedColumnIsTheOffendingParameterType(t *testing.T) {
+// TestReportedColumnIsTheOffendingParameter pins the column of the diagnostic.
+// analysistest matches by line and the corpus Finding is {rule, path, line}, so
+// moving the report from the parameter to the parameter list left every
+// instrument in the suite silent while every diagnostic in every repo moved to
+// the opening parenthesis. The column is the offending PARAMETER's name, which
+// is what makes one finding per parameter distinguishable from another in a
+// grouped field — the field's type is one position for however many parameters
+// it declares, and both drivers collapse two diagnostics that share one.
+func TestReportedColumnIsTheOffendingParameter(t *testing.T) {
 	const src source = `package p
 
 import "context"
@@ -59,8 +65,24 @@ func f(n int, ctx context.Context) { _ = n; _ = ctx }
 	require.Len(t, diagnostics, 1)
 	position := fset.Position(diagnostics[0].Pos)
 	assert.Equal(t, 5, position.Line)
-	assert.Equal(t, 19, position.Column, "context.Context begins at column 19; the parameter list opens at 7")
+	assert.Equal(t, 15, position.Column, "the parameter ctx begins at column 15; the parameter list opens at 7")
 	assert.Equal(t, message, diagnostics[0].Message)
+}
+
+// TestAnUnnamedParameterIsReportedAtItsType is the other half of that rule: a
+// parameter with no name has nothing to point at but its type, and one unnamed
+// field declares exactly one parameter, so the count is unaffected.
+func TestAnUnnamedParameterIsReportedAtItsType(t *testing.T) {
+	const src source = `package p
+
+import "context"
+
+func f(int, context.Context) {}
+`
+	fset, diagnostics := analyze(t, src)
+	require.Len(t, diagnostics, 1)
+	assert.Equal(t, 13, fset.Position(diagnostics[0].Pos).Column,
+		"context.Context begins at column 13; the parameter list opens at 7")
 }
 
 // TestEveryOffendingParameterIsReported drives the multiplicity of the rule,
@@ -117,4 +139,100 @@ func analyze(t *testing.T, src source) (*token.FileSet, []analysis.Diagnostic) {
 	require.NoError(t, err)
 	require.Nil(t, result)
 	return fset, diagnostics
+}
+
+// TestAVariadicContextAfterANonContextIsReported closes the escape a fix in
+// this session opened. Exempting `...context.Context` made the rule switchable
+// off by one token, and the token costs the author nothing: the call site
+// `Handle(3, ctx)` is byte-identical under both spellings and compiles under
+// both, while the honest remedy — reordering — breaks every call site. The
+// exemption's stated reason was that the Go spec forces a variadic's position,
+// but an author who writes `...` chose that position freely, and the analyzer
+// already reports the genuinely-forced case (a method whose order an interface
+// dictates) without exempting it.
+func TestAVariadicContextAfterANonContextIsReported(t *testing.T) {
+	const src source = `package p
+
+import "context"
+
+func f(n int, ctxs ...context.Context) { _, _ = n, ctxs }
+`
+	fset, diagnostics := analyze(t, src)
+	require.Len(t, diagnostics, 1)
+	assert.Equal(t, 5, fset.Position(diagnostics[0].Pos).Line)
+	assert.Equal(t, variadicMessage, diagnostics[0].Message,
+		"the ordinary message prescribes a reorder the Go spec forbids for a variadic")
+}
+
+// TestALeadingVariadicContextIsSilent is the other side of that boundary: a
+// variadic context with no non-context before it breaks no prefix, so the
+// finding above is about the position and not about the ellipsis.
+func TestALeadingVariadicContextIsSilent(t *testing.T) {
+	const src source = `package p
+
+import "context"
+
+func f(ctxs ...context.Context) { _ = ctxs }
+`
+	_, diagnostics := analyze(t, src)
+	assert.Empty(t, diagnostics)
+}
+
+// TestTheVariadicRemedyCompiles runs the remedy the diagnostic prescribes.
+// s04 item 8 asks whether the author can do anything except silence the rule,
+// and the answer has to be a shape the compiler accepts: a leading
+// []context.Context is silent, and unlike the variadic it cannot be omitted at
+// the call site.
+func TestTheVariadicRemedyCompiles(t *testing.T) {
+	const src source = `package p
+
+import "context"
+
+func f(ctxs []context.Context, n int) { _, _ = ctxs, n }
+`
+	_, diagnostics := analyze(t, src)
+	assert.Empty(t, diagnostics, "a leading slice of contexts is the remedy the message names")
+}
+
+// TestFieldSpellingDoesNotChangeTheCount pins the promise the package comment
+// makes twice. `(a, b context.Context)` and `(a context.Context, b
+// context.Context)` are the same positional list, so they draw the same number
+// of findings; reporting once per FIELD made the count a property of the
+// spelling, which also weakened C4 — in the grouped spelling, fixing one of the
+// two names was answered with the same single finding.
+func TestFieldSpellingDoesNotChangeTheCount(t *testing.T) {
+	const grouped source = `package p
+
+import "context"
+
+func f(n int, a, b context.Context) { _, _, _ = n, a, b }
+`
+	const split source = `package p
+
+import "context"
+
+func f(n int, a context.Context, b context.Context) { _, _, _ = n, a, b }
+`
+	_, groupedDiagnostics := analyze(t, grouped)
+	_, splitDiagnostics := analyze(t, split)
+	assert.Len(t, groupedDiagnostics, 2, "the grouped field declares two offending parameters")
+	assert.Len(t, splitDiagnostics, len(groupedDiagnostics), "the positional lists are identical")
+}
+
+// TestAGroupedFieldIsReportedAtEachName keeps the two findings above
+// distinguishable. Both drivers collapse duplicate diagnostics at one position —
+// go/analysis on {pos, end, analyzer, message} and go-yze on {rule, path,
+// message, line, col} — so two findings reported at the field's TYPE arrive as
+// one, and the count would be honest in the analyzer and wrong everywhere else.
+func TestAGroupedFieldIsReportedAtEachName(t *testing.T) {
+	const src source = `package p
+
+import "context"
+
+func f(n int, a, b context.Context) { _, _, _ = n, a, b }
+`
+	fset, diagnostics := analyze(t, src)
+	require.Len(t, diagnostics, 2)
+	assert.Equal(t, 15, fset.Position(diagnostics[0].Pos).Column, "a begins at column 15")
+	assert.Equal(t, 18, fset.Position(diagnostics[1].Pos).Column, "b begins at column 18")
 }
